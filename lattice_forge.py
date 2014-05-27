@@ -796,11 +796,13 @@ class trajectory:
 		return self.trajectoryPoint
 		
 	def log(self, text = ''):
+		logging.info(text)
+		return self
 		with open('lattice_untorsion_log.txt', 'a') as f:
 			f.write(text + '\n')
 		#f = open(savename, 'a')
 		#pickle.dump(cop,f)
-		#f.close()
+		f.close()
 
 	def calculate(self):
 		if not self.isCalculated:
@@ -1546,7 +1548,7 @@ class LatticeCubicReorder(bpy.types.Operator):
 			splines = [[[] for i in range(l[counterDim1])] for j in range(l[counterDim2])]
 			#print(splines)
 			for j1 in range(l[counterDim1]):
-				for j2 in range(l[counterDim1]):
+				for j2 in range(l[counterDim2]):
 					for i in range(l[lattice_dir]):
 						index = factors[lattice_dir] * i + factors[counterDim1] * j1 + factors[counterDim2] * j2
 						#print (i, activeLattice.data.points[i].co)
@@ -1560,7 +1562,7 @@ class LatticeCubicReorder(bpy.types.Operator):
 			l[lattice_dir] = samples
 			factors = {'u': 1, 'v':l['u'], 'w': l['u']*l['v']}
 			for j1 in range(l[counterDim1]):
-				for j2 in range(l[counterDim1]):
+				for j2 in range(l[counterDim2]):
 					nv = spline (splines[j2][j1], samples, 1, 1)
 					ran = range(1,samples - 1)
 					for i in ran:
@@ -1622,6 +1624,115 @@ class LatticeCubicReorder(bpy.types.Operator):
 						w = {1:data[3][i], 2:data[4][i], 3:data[5][i], 4:data[0][i], 5:data[1][i], 6:data[2][i], 7:data[6][i]}
 						vp, vr = calc_deform_step(w,v)
 						activeLattice.data.points[index].co_deform = Vector((vp[1], vp[2], vp[3]))
+		return {'FINISHED'}
+
+class LatticeForge(bpy.types.Operator):
+	'''all  Forges'''
+	bl_idname = 'lattice.latticeforge'
+	bl_label = 'LatticeForges'
+	bl_options = {'REGISTER', 'UNDO'}
+	
+	@classmethod
+	def poll(cls, context):
+		obj = context.active_object
+		return (obj and obj.type == 'LATTICE')
+
+	def execute(self, context):
+		#global logging
+		logging.info("\n************************* Start")
+		activeLattice = bpy.context.active_object
+		lattice_forgedir = context.scene.lattice_forgedir
+		dimA = ['u','v','w']
+		dimAA = {'u':['v','w',0],'v':['u','w',1],'w':['u','v',2]}
+		l = {}
+		l['u'] = activeLattice.data.points_u
+		l['v'] = activeLattice.data.points_v
+		l['w'] = activeLattice.data.points_w
+		# factors for multiplying
+		factors = {'u': 1, 'v':l['u'], 'w': l['u']*l['v']}
+		layers = []
+		for i in range(l[lattice_forgedir]):
+			layer = []
+			j1Target = dimAA[lattice_forgedir][0]
+			j2Target = dimAA[lattice_forgedir][1]
+			for j1 in range(l[j1Target]):
+				for j2 in range(l[j2Target]):
+					index = factors[lattice_forgedir] * i + factors[j1Target] * j1 + factors[j2Target] * j2
+					layer.append({'index':index})
+			logging.info (str(layer))
+			layers.append({'layer': layer, 'index': i})
+		w = 3
+		estimate = [1.0 for i in range(3 * len(layers))]
+		estimate = [0.0, 0.5, 1.0, 0.0, 0.5, 1.0]
+		logging.info ('define(V(v),matrix([v[1],v[2],v[3]]));')
+		logging.info ('define(P(p),matrix([p[1],p[2],p[3]]));')
+		logging.info ('define(VP(v,p), V(v).P(p));')
+		logging.info ('define(VV(v), sqrt(V(v).V(v)));')
+		logging.info ('define(h(v,p), VP(v,p) / VV(v) - VV(v));')
+		# derives to the different coordinates
+		logging.info ('define(h_x(v,p), diff(h(v,p),v[1]));')
+		logging.info ('define(h_y(v,p), diff(h(v,p),v[2]));')
+		logging.info ('define(h_z(v,p), diff(h(v,p),v[3]));')
+		
+		while 0 < w:
+			logging.info ('***** ' + str(w) + ' *****')
+			#print('***** ' + str(w))
+			w -= 1
+			m = matrix()
+			t = []
+			mi = 0
+			for i in range(len(layers)):
+				logging.info ('** Layer ' + str(i))
+				v_x , v_y , v_z = estimate[3*i] , estimate[3*i + 1] , estimate[3*i + 2]
+				logging.info ('v[' + str(i) + ']:[' + str(v_x) + ',' + str(v_y) + ',' + str(v_z) + ']' )
+				for poiElem in layers[i]['layer']:
+					poi = poiElem['index']
+					co = activeLattice.data.points[poi].co_deform.copy()
+					logging.info ('p:[' + str(co.x) + ',' + str(co.y) + ',' + str(co.z) + ']' )
+					dot_prod = v_x * co.x + v_y  * co.y + v_z * co.z
+					vv = v_x * v_x + v_y  * v_y + v_z * v_z
+					v = sqrt(vv)
+					# targetValue
+					h = dot_prod / v - v
+					# derivatives
+					dx = co.x / v - v_x * (dot_prod / (vv * v) + 1 / v)
+					dy = co.y / v - v_y * (dot_prod / (vv * v) + 1 / v)
+					dz = co.z / v - v_z * (dot_prod / (vv * v) + 1 / v)
+					#print ('poi' , i , poi , co, dot_prod, v, dx, dy, dz)
+					#print (dx, dy, dz)
+					m.set(mi,3*i  ,dx)
+					m.set(mi,3*i+1,dy)
+					m.set(mi,3*i+2,dz)
+					t.append(h)
+					#t.append(dist[3])
+					mi += 1
+			#logging.info ('diff %8.3f %8.3f %8.3f %8.3f %8.3f %8.3f %8.3f', dist_diffwx, dist_diffwy, dist_diffwz, dist_difftx, dist_diffty, dist_difftz, dist_diffs )
+			#meanErrorRaw = 0.0
+			#if 0 < ii:
+			logging.info (m.writeWMaxima('d'))
+			#print ('m')
+			m.write()
+			#print(m.writeWMaxima('d'))
+			ma = m.t_copy().mul_matrix(m)
+			logging.info ('dd:transpose(d).d;')
+			logging.info (ma.writeWMaxima('dd'))
+			vb = m.t_copy().mul_vektor(t)
+			logging.info ('t:matrix(' + str(t) + ');')
+			logging.info ('vb:transpose(d).t');
+			logging.info ('vb:' + str(vb))
+			#print ('vb', vb)
+			
+			mt = ma.copy().appendCol(vb)
+			ee = ma.cholesky(vb)
+			logging.info (mt.writeWMaxima('mt'))
+			logging.info ('linsolve(maplist(first,mt.[w1x,w1y,w1z,w2x,w2y,w2z,-1]),[w1x,w1y,w1z,w2x,w2y,w2z]);')
+			logging.info ('ee: ' + str(ee))
+			logging.info ('estimate direction: ' + str(ee))
+			for i,vv in enumerate(estimate):
+				estimate[i] += ee[i]
+			logging.info ('estimate' + str(estimate))
+			
+		logging.shutdown()
 		return {'FINISHED'}
 
 def closestAngle(original, bias):
@@ -2111,9 +2222,10 @@ class VIEW3D_PT_tools_LatticeForge(bpy.types.Panel):
 		layout = self.layout
 
 		col = layout.column(align=True)
-		col.operator("lattice.bind", text="bind lattice")
-		col.operator("lattice.rebind", text="rebind lattice")
-		col.operator("lattice.unbind", text="apply lattice")
+		row = col.row(align=True)
+		row.operator("lattice.bind", text="Bind Lattice")
+		row.operator("lattice.rebind", text="Rebind Lattice")
+		col.operator("lattice.unbind", text="Apply Lattice")
 
 		#row = col.row()
 		col = layout.column(align=True)
@@ -2121,20 +2233,26 @@ class VIEW3D_PT_tools_LatticeForge(bpy.types.Panel):
 
 		#col2 = layout.column(align=True)
 		col = layout.column(align=True)
-		col.operator("lattice.latticeaddcubic", text="Cubic *2")
+		col.operator("lattice.latticeaddcubic", text="Cubic *2 add Points")
 
 		#col = layout.column(align=True)
 		#col.operator("lattice.latticeremesh", text="remesh")
 		
 		col = layout.column(align=True)
-		col.prop(context.scene, "lattice_reorder_samplesmode")
-		col.prop(context.scene, "lattice_reorder_samples")
+		row = col.row(align=True)
+		row.prop(context.scene, "lattice_reorder_samplesmode")
+		row.prop(context.scene, "lattice_reorder_samples")
 		col.operator("lattice.latticecubicreorder", text="Reorder Cubic")
 		
 		col = layout.column(align=True)
-		col.prop(context.scene, "lattice_add_samplesmode")
-		col.prop(context.scene, "lattice_add_samples")
-		col.operator("lattice.latticelinearadd", text="add samples")
+		row = col.row(align=True)
+		row.prop(context.scene, "lattice_add_samplesmode")
+		row.prop(context.scene, "lattice_add_samples")
+		col.operator("lattice.latticelinearadd", text="Add Points")
+		
+		col = layout.column(align=True)
+		col.prop(context.scene, "lattice_forgedir")
+		col.operator("lattice.latticeforge", text="forge")
 		
 		#col = layout.column(align=True)
 		#col.operator("lattice.latticeuntorsion", text="untorsion")
@@ -2180,7 +2298,8 @@ classes = [VIEW3D_PT_tools_LatticeForge,
 	LatticeUnTorsion,
 	LatticeTest,
 	LatticeCubicReorder,
-	LatticeLinearAdd]
+	LatticeLinearAdd,
+	LatticeForge]
 
 def register():
 	#bpy.utils.register_module(__name__)
@@ -2195,25 +2314,33 @@ def register():
 			],
 		default='u')
 	bpy.types.Scene.lattice_add_samples = IntProperty(
-		name="samples",
-		description="Samples to Add",
+		name="points",
+		description="Points to Add",
 		default = 12,
 		min = 1,
 		max = 64)
 	bpy.types.Scene.lattice_add_samplesmode = BoolProperty(
 		name="individual",
-		description="Samples to Add",
+		description="varying amounts of point per section",
 		default = True)
 	bpy.types.Scene.lattice_reorder_samples = IntProperty(
-		name="samples",
-		description="Samples to Reorder",
+		name="points",
+		description="Points to Reorder",
 		default = 12,
 		min = 3,
 		max = 64)
 	bpy.types.Scene.lattice_reorder_samplesmode = BoolProperty(
 		name="individual",
-		description="Samples to Reorder",
+		description="Points to Reorder",
 		default = True)
+	bpy.types.Scene.lattice_forgedir = EnumProperty(
+		name="",
+		description="Direction of the Lattice",
+		items=[("u","u","u-dir"),
+			("v","v","v-dir"),
+			("w","w","w-dir"),
+			],
+		default='u')
 
 def unregister():
 	#bpy.utils.unregister_module(__name__)
@@ -2222,5 +2349,5 @@ def unregister():
 	del bpy.types.Scene.lattice_dir
 
 if __name__ == "__main__":
-	#logging.basicConfig(filename='c:\\tmp\\python.log', format='%(message)s', level=logging.INFO)
 	register()
+	logging.basicConfig(filename='c:\\tmp\\python.txt', format='%(message)s', level=logging.DEBUG)
