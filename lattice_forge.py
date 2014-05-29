@@ -796,11 +796,13 @@ class trajectory:
 		return self.trajectoryPoint
 		
 	def log(self, text = ''):
+		logging.info(text)
+		return self
 		with open('lattice_untorsion_log.txt', 'a') as f:
 			f.write(text + '\n')
 		#f = open(savename, 'a')
 		#pickle.dump(cop,f)
-		#f.close()
+		f.close()
 
 	def calculate(self):
 		if not self.isCalculated:
@@ -1546,7 +1548,7 @@ class LatticeCubicReorder(bpy.types.Operator):
 			splines = [[[] for i in range(l[counterDim1])] for j in range(l[counterDim2])]
 			#print(splines)
 			for j1 in range(l[counterDim1]):
-				for j2 in range(l[counterDim1]):
+				for j2 in range(l[counterDim2]):
 					for i in range(l[lattice_dir]):
 						index = factors[lattice_dir] * i + factors[counterDim1] * j1 + factors[counterDim2] * j2
 						#print (i, activeLattice.data.points[i].co)
@@ -1560,7 +1562,7 @@ class LatticeCubicReorder(bpy.types.Operator):
 			l[lattice_dir] = samples
 			factors = {'u': 1, 'v':l['u'], 'w': l['u']*l['v']}
 			for j1 in range(l[counterDim1]):
-				for j2 in range(l[counterDim1]):
+				for j2 in range(l[counterDim2]):
 					nv = spline (splines[j2][j1], samples, 1, 1)
 					ran = range(1,samples - 1)
 					for i in ran:
@@ -1624,6 +1626,318 @@ class LatticeCubicReorder(bpy.types.Operator):
 						activeLattice.data.points[index].co_deform = Vector((vp[1], vp[2], vp[3]))
 		return {'FINISHED'}
 
+class LatticeForgePlanar(bpy.types.Operator):
+	'''forges all layer to be planar'''
+	bl_idname = 'lattice.latticeforgeplanar'
+	bl_label = 'LatticeForgePlanar'
+	bl_options = {'REGISTER', 'UNDO'}
+	
+	@classmethod
+	def poll(cls, context):
+		obj = context.active_object
+		return (obj and obj.type == 'LATTICE')
+
+	def execute(self, context):
+		#global logging 
+		#logging.info("\n************************* Start")
+		activeLattice = bpy.context.active_object
+		lattice_forgedir = context.scene.lattice_forgedir
+		dimA = ['u','v','w']
+		dimAA = {'u':['v','w',0],'v':['u','w',1],'w':['u','v',2]}
+		l = {}
+		l['u'] = activeLattice.data.points_u
+		l['v'] = activeLattice.data.points_v
+		l['w'] = activeLattice.data.points_w
+		# factors for multiplying
+		factors = {'u': 1, 'v':l['u'], 'w': l['u']*l['v']}
+		layers = []
+		for i in range(l[lattice_forgedir]):
+			layer = []
+			j1Target = dimAA[lattice_forgedir][0]
+			j2Target = dimAA[lattice_forgedir][1]
+			for j1 in range(l[j1Target]):
+				for j2 in range(l[j2Target]):
+					index = factors[lattice_forgedir] * i + factors[j1Target] * j1 + factors[j2Target] * j2
+					layer.append({'index':index})
+			#logging.info (str(layer))
+			layers.append({'layer': layer, 'index': i})
+		estimate = [1.0 for i in range(3 * len(layers))]
+		# for controlling
+		#logging.info ('define(V(v),matrix([v[1],v[2],v[3]]));')
+		#logging.info ('define(P(p),matrix([p[1],p[2],p[3]]));')
+		#logging.info ('define(VP(v,p), V(v).P(p));')
+		#logging.info ('define(VV(v), sqrt(V(v).V(v)));')
+		#logging.info ('define(h(v,p), VP(v,p) / VV(v) - VV(v));')
+		# derives to the different coordinates
+		#logging.info ('define(h_x(v,p), diff(h(v,p),v[1]));')
+		#logging.info ('define(h_y(v,p), diff(h(v,p),v[2]));')
+		#logging.info ('define(h_z(v,p), diff(h(v,p),v[3]));')
+		w = 1000
+		errorHist = []
+		while 0 < w:
+			#logging.info ('***** ' + str(w) + ' *****')
+			#print('***** ' + str(w))
+			w -= 1
+			m = matrix()
+			t = []
+			mi = 0
+			for i in range(len(layers)):
+				#logging.info ('** Layer ' + str(i))
+				v_x , v_y , v_z = estimate[3*i] , estimate[3*i + 1] , estimate[3*i + 2]
+				log_v = '[' + str(v_x) + ',' + str(v_y) + ',' + str(v_z) + ']'
+				#logging.info ('v[' + str(i) + ']:[' + str(v_x) + ',' + str(v_y) + ',' + str(v_z) + ']' )
+				for poiElem in layers[i]['layer']:
+					poi = poiElem['index']
+					co = activeLattice.data.points[poi].co_deform.copy()
+					log_p = '[' + str(co.x) + ',' + str(co.y) + ',' + str(co.z) + ']'
+					#logging.info ('p:[' + str(co.x) + ',' + str(co.y) + ',' + str(co.z) + ']' )
+					dot_prod = v_x * co.x + v_y  * co.y + v_z * co.z
+					vv = v_x * v_x + v_y  * v_y + v_z * v_z
+					v = sqrt(vv)
+					# targetValue
+					h = dot_prod / v - v
+					#logging.info ('h(' + log_v + ',' + log_p + ');')
+					#logging.info ('=>' + str(h))
+					# derivatives
+					dx = co.x / v - v_x * (dot_prod / (vv * v) + 1 / v)
+					dy = co.y / v - v_y * (dot_prod / (vv * v) + 1 / v)
+					dz = co.z / v - v_z * (dot_prod / (vv * v) + 1 / v)
+					#logging.info ('h_x(' + log_v + ',' + log_p + ');')
+					#logging.info ('h_y(' + log_v + ',' + log_p + ');')
+					#logging.info ('h_z(' + log_v + ',' + log_p + ');')
+					#logging.info ('=>' + str(dx) + ',' + str(dy) + ',' + str(dz))
+					#print ('poi' , i , poi , co, dot_prod, v, dx, dy, dz)
+					#print (dx, dy, dz)
+					m.set(mi,3*i  ,dx)
+					m.set(mi,3*i+1,dy)
+					m.set(mi,3*i+2,dz)
+					t.append(h)
+					#t.append(dist[3])
+					mi += 1
+			#logging.info ('')
+			#logging.info ('diff %8.3f %8.3f %8.3f %8.3f %8.3f %8.3f %8.3f', dist_diffwx, dist_diffwy, dist_diffwz, dist_difftx, dist_diffty, dist_difftz, dist_diffs )
+			#meanErrorRaw = 0.0
+			#if 0 < ii:
+			#logging.info (m.writeWMaxima('d'))
+			#print ('m')
+			#m.write()
+			#print(m.writeWMaxima('d'))
+			ma = m.t_copy().mul_matrix(m)
+			#logging.info ('dd:transpose(d).d;')
+			#logging.info (ma.writeWMaxima('=>'))
+			#logging.info ('')
+			vb = m.t_copy().mul_vektor(t)
+			#logging.info ('t:matrix(' + str(t) + ');')
+			#logging.info ('vb:transpose(d).t');
+			#logging.info ('=>:' + str(vb))
+			#print ('vb', vb)
+			
+			mt = ma.copy().appendCol(vb)
+			ee = ma.cholesky(vb)
+			#logging.info (mt.writeWMaxima('mt'))
+			#logging.info ('linsolve(maplist(first,mt.[w1x,w1y,w1z,w2x,w2y,w2z,-1]),[w1x,w1y,w1z,w2x,w2y,w2z]);')
+			#logging.info ('ee: ' + str(ee))
+			#logging.info ('estimate direction: ' + str(ee))
+			error = 0.0
+			for i,vv in enumerate(estimate):
+				error += ee[i]*ee[i]
+				estimate[i] += 0.5*ee[i]
+			if error < 1e-7:
+				w = 0
+			errorHist.append(error)
+			#logging.info ('estimate' + str(estimate))
+			
+		#logging.info('')
+		#logging.info('ErrorHistorie: ' + str(errorHist))
+		
+		# make the results
+		for i in range(len(layers)):
+			#logging.info ('** Layer Result ' + str(i))
+			v_x , v_y , v_z = estimate[3*i] , estimate[3*i + 1] , estimate[3*i + 2]
+			log_v = '[' + str(v_x) + ',' + str(v_y) + ',' + str(v_z) + ']'
+			#logging.info ('v[' + str(i) + ']:[' + str(v_x) + ',' + str(v_y) + ',' + str(v_z) + ']' )
+			for poiElem in layers[i]['layer']:
+				poi = poiElem['index']
+				co = activeLattice.data.points[poi].co_deform.copy()
+				log_p = '[' + str(co.x) + ',' + str(co.y) + ',' + str(co.z) + ']'
+				#logging.info ('p:[' + str(co.x) + ',' + str(co.y) + ',' + str(co.z) + ']' )
+				dot_prod = v_x * co.x + v_y  * co.y + v_z * co.z
+				vv = v_x * v_x + v_y  * v_y + v_z * v_z
+				v = sqrt(vv)
+				# targetValue
+				h = dot_prod / v - v
+				#logging.info ('h: ' + str(h) )
+				co.x, co.y, co.z = co.x - h * v_x / v,  co.y - h * v_y / v, co.z - h * v_z / v
+				activeLattice.data.points[poi].co_deform = co
+				
+		logging.shutdown()
+		return {'FINISHED'}
+
+class LatticeForgeMultiPlanar(bpy.types.Operator):
+	'''forges all layer to be planar in the same direction'''
+	bl_idname = 'lattice.latticeforgemultiplanar'
+	bl_label = 'LatticeForgeMultiPlanar'
+	bl_options = {'REGISTER', 'UNDO'}
+	
+	@classmethod
+	def poll(cls, context):
+		obj = context.active_object
+		return (obj and obj.type == 'LATTICE')
+
+	def execute(self, context):
+		#global logging
+		#logging.info("\n************************* Start")
+		activeLattice = bpy.context.active_object
+		lattice_forgedir = context.scene.lattice_forgedir
+		dimA = ['u','v','w']
+		dimAA = {'u':['v','w',0],'v':['u','w',1],'w':['u','v',2]}
+		l = {}
+		l['u'] = activeLattice.data.points_u
+		l['v'] = activeLattice.data.points_v
+		l['w'] = activeLattice.data.points_w
+		# factors for multiplying
+		factors = {'u': 1, 'v':l['u'], 'w': l['u']*l['v']}
+		layers = []
+		for i in range(l[lattice_forgedir]):
+			layer = []
+			j1Target = dimAA[lattice_forgedir][0]
+			j2Target = dimAA[lattice_forgedir][1]
+			for j1 in range(l[j1Target]):
+				for j2 in range(l[j2Target]):
+					index = factors[lattice_forgedir] * i + factors[j1Target] * j1 + factors[j2Target] * j2
+					layer.append({'index':index})
+			#logging.info (str(layer))
+			layers.append({'layer': layer, 'index': i})
+		estimate = [1.0 for i in range(2 + len(layers))]
+		# *** for controlling
+		#logging.info ('define(V(v,b),matrix([b*v[1],b*v[2],b*v[3]]));')
+		#logging.info ('define(P(p),matrix([p[1],p[2],p[3]]));')
+		#logging.info ('define(VP(v,b,p), V(v,b).P(p));')
+		#logging.info ('define(VV(v,b), sqrt(V(v,b).V(v,b)));')
+		#logging.info ('define(h(v,b,p), VP(v,b,p) / VV(v,b) - VV(v,b));')
+		# *** derives to the different coordinates
+		#logging.info ('define(h_x(v,b,p), diff(h(v,b,p),v[1]));')
+		#logging.info ('define(h_y(v,b,p), diff(h(v,b,p),v[2]));')
+		#logging.info ('define(h_z(v,b,p), diff(h(v,b,p),v[3]));')
+		#logging.info ('define(h_b(v,b,p), diff(h(v,b,p),b));')
+		w = 1000
+		errorHist = []
+		maxLayerConsidered = 1
+		while 0 < w:
+			#logging.info ('***** ' + str(w) + ' *****')
+			w -= 1
+			m = matrix()
+			t = []
+			mi = 0
+			v_x , v_y , v_z = estimate[0] , estimate[1] , estimate[2]
+			for i in range(maxLayerConsidered):
+				#logging.info ('** Layer ' + str(i))
+				b = 1.0
+				if 0 < i:
+					b = estimate[2 + i]
+				log_v = '[' + str(v_x) + ',' + str(v_y) + ',' + str(v_z) + '],' + str(b)
+				#logging.info ('v[' + str(i) + ']:[' + str(v_x) + ',' + str(v_y) + ',' + str(v_z) + ']' )
+				for poiElem in layers[i]['layer']:
+					poi = poiElem['index']
+					co = activeLattice.data.points[poi].co_deform.copy()
+					log_p = '[' + str(co.x) + ',' + str(co.y) + ',' + str(co.z) + ']'
+					
+					dot_prod = (v_x * co.x + v_y  * co.y + v_z * co.z) * b
+					vvr = (v_x * v_x + v_y  * v_y + v_z * v_z)
+					vr = sqrt(vvr)
+					vv = vvr * b * b
+					v = sqrt(vv)
+					vvv = v * vv
+					# targetValue
+					h = 0.0
+					dx, dy, dz = 0.0, 0.0, 0.0
+					#logging.info ('v: ' + str(v) )
+					#logging.info ('h(' + log_v + ',' + log_p + ');')
+					if 1e-9 < abs(v):
+						h = dot_prod / v - v
+						#logging.info ('=>' + str(h))
+						dx = (co.x * b - v_x * b * b) / v - v_x * b * b * dot_prod / vvv
+						dy = (co.y * b - v_y * b * b) / v - v_y * b * b * dot_prod / vvv
+						dz = (co.z * b - v_z * b * b) / v - v_z * b * b * dot_prod / vvv
+					db = -vr
+					#logging.info ('h_x(' + log_v + ',' + log_p + ');')
+					#logging.info ('h_y(' + log_v + ',' + log_p + ');')
+					#logging.info ('h_z(' + log_v + ',' + log_p + ');')
+					#logging.info ('h_b(' + log_v + ',' + log_p + ');')
+					#logging.info ('=>' + str(dx) + ',' + str(dy) + ',' + str(dz) + ',' + str(db))
+					m.set(mi,0,dx)
+					m.set(mi,1,dy)
+					m.set(mi,2,dz)
+					if 0 < i:
+						m.set(mi,i+2,db)
+					t.append(h)
+					#t.append(dist[3])
+					mi += 1
+			#logging.info (m.writeWMaxima('d'))
+			ma = m.t_copy().mul_matrix(m)
+			#logging.info ('dd:transpose(d).d;')
+			#logging.info (ma.writeWMaxima('=>'))
+			#logging.info ('')
+			vb = m.t_copy().mul_vektor(t)
+			#logging.info ('t:matrix(' + str(t) + ');')
+			#logging.info ('vb:transpose(d).t');
+			#logging.info ('=>:' + str(vb))
+			mt = ma.copy().appendCol(vb)
+			ee = ma.cholesky(vb)
+			#logging.info (mt.writeWMaxima('mt'))
+			#logging.info ('linsolve(maplist(first,mt.[wx,wy,wz,a1,a2,-1]),[wx,wy,wz,a1,a2]);')
+			#logging.info ('ee: ' + str(ee))
+			#logging.info ('estimate direction: ' + str(ee))
+			error = 0.0
+			for i,vv in enumerate(estimate):
+				if i < 2 + maxLayerConsidered:
+					#logging.info ('xx: ' + str(i) + ' ' + str(ee[i]))
+					error += ee[i]*ee[i]
+					if 1.0 < ee[i]:
+						ee[i] = 1.0
+					if ee[i] < -1.0:
+						ee[i] = -1.0
+					estimate[i] += 0.5 * ee[i]
+			if error < 1e-7:
+				if maxLayerConsidered < len(layers):
+					maxLayerConsidered += 1
+				else:
+					w = 0
+			errorHist.append(error)
+			#logging.info ('error: ' + str(error))
+			#logging.info ('estimate' + str(estimate))
+			
+		#logging.info('')
+		#logging.info('ErrorHistorie: ' + str(errorHist))
+		#logging.info ('estimate' + str(estimate))
+			
+		# make the results
+		v_x , v_y , v_z = estimate[0] , estimate[1] , estimate[2]
+		for i in range(len(layers)):
+			#logging.info ('** Layer Result ' + str(i))
+			b = 1.0
+			if 0 < i:
+				b = estimate[2 + i]
+			#log_v = '[' + str(v_x) + ',' + str(v_y) + ',' + str(v_z) + ']'
+			#logging.info ('v[' + str(i) + ']:[' + str(v_x) + ',' + str(v_y) + ',' + str(v_z) + ']' )
+			for poiElem in layers[i]['layer']:
+				poi = poiElem['index']
+				co = activeLattice.data.points[poi].co_deform.copy()
+				#log_p = '[' + str(co.x) + ',' + str(co.y) + ',' + str(co.z) + ']'
+				#logging.info ('p:[' + str(co.x) + ',' + str(co.y) + ',' + str(co.z) + ']' )
+				dot_prod = (v_x * co.x + v_y  * co.y + v_z * co.z) * b
+				vvr = (v_x * v_x + v_y  * v_y + v_z * v_z)
+				vv = vvr * b * b
+				v = sqrt(vv)
+				# targetValue
+				if 1e-7 < v:
+					h = dot_prod / v - v
+					#logging.info ('h: ' + str(h) )
+					co.x, co.y, co.z = co.x - b * h * v_x / v,  co.y - b * h * v_y / v, co.z - b * h * v_z / v
+					activeLattice.data.points[poi].co_deform = co
+				
+		return {'FINISHED'}
+		
 def closestAngle(original, bias):
 	#ori = original
 	while pi < original - bias:
@@ -2111,9 +2425,10 @@ class VIEW3D_PT_tools_LatticeForge(bpy.types.Panel):
 		layout = self.layout
 
 		col = layout.column(align=True)
-		col.operator("lattice.bind", text="bind lattice")
-		col.operator("lattice.rebind", text="rebind lattice")
-		col.operator("lattice.unbind", text="apply lattice")
+		row = col.row(align=True)
+		row.operator("lattice.bind", text="Bind Lattice")
+		row.operator("lattice.rebind", text="Rebind Lattice")
+		col.operator("lattice.unbind", text="Apply Lattice")
 
 		#row = col.row()
 		col = layout.column(align=True)
@@ -2121,20 +2436,27 @@ class VIEW3D_PT_tools_LatticeForge(bpy.types.Panel):
 
 		#col2 = layout.column(align=True)
 		col = layout.column(align=True)
-		col.operator("lattice.latticeaddcubic", text="Cubic *2")
+		col.operator("lattice.latticeaddcubic", text="Cubic *2 add Points")
 
 		#col = layout.column(align=True)
 		#col.operator("lattice.latticeremesh", text="remesh")
 		
 		col = layout.column(align=True)
-		col.prop(context.scene, "lattice_reorder_samplesmode")
-		col.prop(context.scene, "lattice_reorder_samples")
+		row = col.row(align=True)
+		row.prop(context.scene, "lattice_reorder_samplesmode")
+		row.prop(context.scene, "lattice_reorder_samples")
 		col.operator("lattice.latticecubicreorder", text="Reorder Cubic")
 		
 		col = layout.column(align=True)
-		col.prop(context.scene, "lattice_add_samplesmode")
-		col.prop(context.scene, "lattice_add_samples")
-		col.operator("lattice.latticelinearadd", text="add samples")
+		row = col.row(align=True)
+		row.prop(context.scene, "lattice_add_samplesmode")
+		row.prop(context.scene, "lattice_add_samples")
+		col.operator("lattice.latticelinearadd", text="Add Points")
+		
+		col = layout.column(align=True)
+		col.prop(context.scene, "lattice_forgedir")
+		col.operator("lattice.latticeforgeplanar", text="planar diff dir")
+		col.operator("lattice.latticeforgemultiplanar", text="planar same dir")
 		
 		#col = layout.column(align=True)
 		#col.operator("lattice.latticeuntorsion", text="untorsion")
@@ -2180,7 +2502,9 @@ classes = [VIEW3D_PT_tools_LatticeForge,
 	LatticeUnTorsion,
 	LatticeTest,
 	LatticeCubicReorder,
-	LatticeLinearAdd]
+	LatticeLinearAdd,
+	LatticeForgePlanar,
+	LatticeForgeMultiPlanar,]
 
 def register():
 	#bpy.utils.register_module(__name__)
@@ -2195,25 +2519,33 @@ def register():
 			],
 		default='u')
 	bpy.types.Scene.lattice_add_samples = IntProperty(
-		name="samples",
-		description="Samples to Add",
+		name="points",
+		description="Points to Add",
 		default = 12,
 		min = 1,
 		max = 64)
 	bpy.types.Scene.lattice_add_samplesmode = BoolProperty(
 		name="individual",
-		description="Samples to Add",
+		description="varying amounts of point per section",
 		default = True)
 	bpy.types.Scene.lattice_reorder_samples = IntProperty(
-		name="samples",
-		description="Samples to Reorder",
+		name="points",
+		description="Points to Reorder",
 		default = 12,
 		min = 3,
 		max = 64)
 	bpy.types.Scene.lattice_reorder_samplesmode = BoolProperty(
 		name="individual",
-		description="Samples to Reorder",
+		description="Points to Reorder",
 		default = True)
+	bpy.types.Scene.lattice_forgedir = EnumProperty(
+		name="",
+		description="Direction of the Lattice",
+		items=[("u","u","u-dir"),
+			("v","v","v-dir"),
+			("w","w","w-dir"),
+			],
+		default='u')
 
 def unregister():
 	#bpy.utils.unregister_module(__name__)
@@ -2222,5 +2554,5 @@ def unregister():
 	del bpy.types.Scene.lattice_dir
 
 if __name__ == "__main__":
-	#logging.basicConfig(filename='c:\\tmp\\python.log', format='%(message)s', level=logging.INFO)
 	register()
+	logging.basicConfig(filename='c:\\tmp\\python.txt', format='%(message)s', level=logging.DEBUG)
