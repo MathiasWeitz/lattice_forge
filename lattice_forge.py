@@ -1808,7 +1808,7 @@ class LatticeForgeMultiPlanar(bpy.types.Operator):
 					layer.append({'index':index})
 			#logging.info (str(layer))
 			layers.append({'layer': layer, 'index': i})
-		estimate = [1.0 for i in range(2 + len(layers))]
+		estimate = [0.1111 for i in range(2 + len(layers))]
 		# *** for controlling
 		#logging.info ('define(V(v,b),matrix([b*v[1],b*v[2],b*v[3]]));')
 		#logging.info ('define(P(p),matrix([p[1],p[2],p[3]]));')
@@ -1893,18 +1893,18 @@ class LatticeForgeMultiPlanar(bpy.types.Operator):
 				if i < 2 + maxLayerConsidered:
 					#logging.info ('xx: ' + str(i) + ' ' + str(ee[i]))
 					error += ee[i]*ee[i]
-					if 1.0 < ee[i]:
-						ee[i] = 1.0
-					if ee[i] < -1.0:
-						ee[i] = -1.0
-					estimate[i] += 0.5 * ee[i]
+					#if 1.0 < ee[i]:
+					#	ee[i] = 1.0
+					#if ee[i] < -1.0:
+					#	ee[i] = -1.0
+					estimate[i] += 0.25 * ee[i]
 			if error < 1e-7:
 				if maxLayerConsidered < len(layers):
 					maxLayerConsidered += 1
 				else:
 					w = 0
 			errorHist.append(error)
-			#logging.info ('error: ' + str(error))
+			#logging.info ('LayerConsidered: ' + str(maxLayerConsidered) + ', error: ' + str(error))
 			#logging.info ('estimate' + str(estimate))
 			
 		#logging.info('')
@@ -1934,6 +1934,7 @@ class LatticeForgeMultiPlanar(bpy.types.Operator):
 					h = dot_prod / v - v
 					#logging.info ('h: ' + str(h) )
 					co.x, co.y, co.z = co.x - b * h * v_x / v,  co.y - b * h * v_y / v, co.z - b * h * v_z / v
+					#co.x, co.y, co.z = co.x - h * v_x / v,  co.y - h * v_y / v, co.z - h * v_z / v
 					activeLattice.data.points[poi].co_deform = co
 				
 		return {'FINISHED'}
