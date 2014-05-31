@@ -1250,8 +1250,8 @@ class LatticeReBind(bpy.types.Operator):
 			mino['v'], maxo['v'], f['v'] = - (oL.y + 0.5) / oS.y, - (oL.y - 0.5) / oS.y, 1.0 / (l['v']-1) / oS.y
 			mino['w'], maxo['w'], f['w'] = - (oL.z + 0.5) / oS.z, - (oL.z - 0.5) / oS.z, 1.0 / (l['w']-1) / oS.z
 			for dir in dimA:
-				addMin[dir] = max(0, math.ceil((mino[dir] - minv[dir]) / f[dir]))
-				addMax[dir] = max(0, math.ceil((maxv[dir] - maxo[dir]) / f[dir]))
+				addMin[dir] = max(0, math.ceil((mino[dir] - minv[dir] - 1e-5) / f[dir]))
+				addMax[dir] = max(0, math.ceil((maxv[dir] - maxo[dir] - 1e-5) / f[dir]))
 				#print (mino[dir], maxo[dir], minv[dir], maxv[dir], f[dir], addMin[dir], addMax[dir] )
 				mink[dir] = mino[dir] - addMin[dir] * f[dir]
 				maxk[dir] = maxo[dir] + addMax[dir] * f[dir]
