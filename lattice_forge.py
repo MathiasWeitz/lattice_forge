@@ -19,9 +19,8 @@
 bl_info = {
 	'name': "Lattices Forge",
 	'author': "Mathias Weitz",
-	'version': (2, 0, 1),
-	'blender': (2, 6, 9),
-	'api': 60995,
+	'version': (2, 0, 2),
+	'blender': (2, 7, 0),
 	'location': "View3D > Tools",
 	'description': "several tools for lattices",
 	'category': 'Lattice'}
@@ -1808,7 +1807,7 @@ class LatticeForgeMultiPlanar(bpy.types.Operator):
 					layer.append({'index':index})
 			#logging.info (str(layer))
 			layers.append({'layer': layer, 'index': i})
-		estimate = [0.1111 for i in range(2 + len(layers))]
+		estimate = [1.0/113 for i in range(2 + len(layers))]
 		# *** for controlling
 		#logging.info ('define(V(v,b),matrix([b*v[1],b*v[2],b*v[3]]));')
 		#logging.info ('define(P(p),matrix([p[1],p[2],p[3]]));')
@@ -2419,6 +2418,7 @@ class VIEW3D_PT_tools_LatticeForge(bpy.types.Panel):
 	bl_context = "objectmode"
 	bl_idname = 'LatticeForge'
 	bl_label = "Lattice Forge"
+	bl_category = "Relations"
 	bl_options = {'DEFAULT_CLOSED'}
 
 	def draw(self, context):
@@ -2475,6 +2475,7 @@ class VIEW3D_PT_tools_LatticeTorsion(bpy.types.Panel):
 	bl_context = "lattice_edit"
 	bl_idname = 'LatticeTorsion'
 	bl_label = "Lattice Torsion"
+	bl_category = "Relations"
 	bl_options = {'DEFAULT_CLOSED'}
 
 	def draw(self, context):
